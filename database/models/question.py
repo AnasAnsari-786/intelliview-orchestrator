@@ -10,7 +10,7 @@ class Question(Base):
 
     __tablename__ = "questions"
 
-    question_id = Column(String(255), primary_key=True, index=True, nullable=False)
+    question_id = Column(String(255), primary_key=True, index=True, nullable=False) 
     text = Column(String(1000), nullable=False)
     category = Column(String(50), nullable=False, index=True)
     difficulty = Column(String(20), nullable=False, default="medium")
