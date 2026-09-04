@@ -158,4 +158,3 @@ SDE_PROMPT_TEMPLATES = [
         ),
     },
 ]
-

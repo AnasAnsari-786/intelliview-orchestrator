@@ -12,6 +12,7 @@ Integrates:
 - Task Queue integration with Celery
 """
 
+import asyncio
 import io
 import json
 import logging
@@ -21,6 +22,7 @@ import time
 import time as _time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
@@ -2409,9 +2411,10 @@ async def get_dashboard():
             os.path.dirname(__file__), "..", "monitoring", "dashboard.html"
         )
 
-        if os.path.exists(dashboard_path):
-            with open(dashboard_path, encoding="utf-8") as f:
-                html_content = f.read()
+        if await asyncio.to_thread(os.path.exists, dashboard_path):
+            html_content = await asyncio.to_thread(
+                Path(dashboard_path).read_text, encoding="utf-8"
+            )
 
             from fastapi.responses import HTMLResponse
 
