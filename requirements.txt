@@ -39,6 +39,8 @@ sentence-transformers
 
 # === PDF Generation ===
 reportlab==4.2.5
+pypdf
+python-docx
 faiss-cpu
 google-generativeai
 # === Load Testing ===
