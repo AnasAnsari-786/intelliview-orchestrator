@@ -52,7 +52,6 @@ class EmailService:
         host = self.settings.smtp_host or "localhost"
         port = self.settings.smtp_port or 1025
 
-
         # Sanitize HTML inputs to prevent injection vulnerabilities
         safe_name = html.escape(candidate_name)
         safe_email = html.escape(candidate_email)
@@ -63,7 +62,6 @@ class EmailService:
         safe_notes = html.escape(notes) if notes else ""
 
         subject = f"Interview Scheduled: AI Interview Session ({safe_date})"
-
 
         # Plain text fallback
         text_body = f"""Dear {candidate_name},
@@ -89,7 +87,6 @@ Please make sure to join on time.
 Best regards,
 IntelliView Interview Team
 """
-
 
         # HTML Email format
         html_body = f"""<!DOCTYPE html>
@@ -154,12 +151,10 @@ IntelliView Interview Team
 </html>
 """
 
-
         message = MIMEMultipart("alternative")
         message["Subject"] = subject
         message["From"] = sender_email
         message["To"] = candidate_email
-
 
         message.attach(MIMEText(text_body, "plain"))
         message.attach(MIMEText(html_body, "html"))
@@ -207,7 +202,7 @@ IntelliView Interview Team
                 logger.info("Email notification successfully dispatched.")
                 return True, "Email sent successfully"
 
-            except (smtplib.SMTPException, OSError) as error:
+            except Exception as error:
                 last_error = error
                 logger.warning(
                     "Email send attempt %s failed: %s",
@@ -218,7 +213,7 @@ IntelliView Interview Team
                 if attempt == max_attempts - 1:
                     break
 
-                wait_time = 2 ** attempt
+                wait_time = 2**attempt
                 logger.info(
                     "Retrying email send in %s second(s).",
                     wait_time,

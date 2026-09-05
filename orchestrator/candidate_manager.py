@@ -84,7 +84,6 @@ class CandidateManager:
         try:
             with open(
                 csv_file_path,
-                "r",
                 encoding="utf-8-sig",
                 newline="",
             ) as file:
@@ -151,7 +150,6 @@ class CandidateManager:
             "candidates": created,
             "errors": errors,
         }
-
 
     def get_candidate(
         self,
