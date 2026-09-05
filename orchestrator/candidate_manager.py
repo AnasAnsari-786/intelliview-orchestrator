@@ -152,7 +152,6 @@ class CandidateManager:
             "errors": errors,
         }
 
-
     def get_candidate(
         self,
         candidate_id: str,
