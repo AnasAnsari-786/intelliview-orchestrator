@@ -52,7 +52,7 @@ def test_whitespace_and_unicode_artifacts_are_sanitized():
         "Candidate Skills:\n"
         "Python\u00a0  FastAPI   SQL\n"
         "\u200bDeveloper\u200d Experience"
-    ).encode("utf-8")
+    ).encode()
 
     result = load_resume(data)
 
