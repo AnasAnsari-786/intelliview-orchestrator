@@ -1,8 +1,8 @@
 """Candidate profile routes."""
 
-import tempfile
-import os
 import logging
+import os
+import tempfile
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field

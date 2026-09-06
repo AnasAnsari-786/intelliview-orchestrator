@@ -1,6 +1,6 @@
 """Question ORM model."""
 
-from sqlalchemy import JSON, Column, DateTime, Float, Integer, String
+from sqlalchemy import Column, DateTime, Float, Integer, String
 
 from database.models._base import Base, utcnow
 
