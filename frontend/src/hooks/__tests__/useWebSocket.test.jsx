@@ -6,6 +6,7 @@ import { useWebSocket } from "../useWebSocket";
 vi.mock("@/lib/api", () => ({
   api: {
     wsUrl: vi.fn(() => "ws://localhost:8000/test"),
+    token: "test-token",
   },
 }));
 
@@ -102,5 +103,44 @@ describe("useWebSocket voice error handling", () => {
     expect(screen.getByTestId("reconnecting")).toHaveTextContent("false");
     expect(screen.getByTestId("retryAttempt")).toHaveTextContent("0");
     expect(screen.getByTestId("error")).toHaveTextContent("");
+  });
+
+  it("ignores a retransmitted message after reconnect", async () => {
+    const onMessage = vi.fn();
+
+    function Subscription() {
+      useWebSocket({ path: "/test", onMessage, enabled: true });
+      return null;
+    }
+
+    render(<Subscription />);
+
+    await act(async () => {
+      sockets[0].readyState = WebSocket.OPEN;
+      sockets[0].onopen?.();
+      sockets[0].onmessage?.({
+        data: JSON.stringify({
+          type: "answer_chunk",
+          client_message_id: "client-1",
+          text: "hello",
+        }),
+      });
+      sockets[0].onclose?.();
+      vi.advanceTimersByTime(500);
+    });
+
+    await act(async () => {
+      sockets[1].readyState = WebSocket.OPEN;
+      sockets[1].onopen?.();
+      sockets[1].onmessage?.({
+        data: JSON.stringify({
+          type: "answer_chunk",
+          client_message_id: "client-1",
+          text: "hello",
+        }),
+      });
+    });
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,6 +1,10 @@
 "use client";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "@/lib/api";
+import {
+  attachClientMessageId,
+  createMessageDeduplicator,
+} from "@/lib/socketDeduplicator";
 
 export function useWebSocket({ path, onMessage, enabled = true }) {
   const [connected, setConnected] = useState(false);
@@ -11,12 +15,23 @@ export function useWebSocket({ path, onMessage, enabled = true }) {
   const [error, setError] = useState(null);
   const wsRef = useRef(null);
   const retryRef = useRef(0);
+  const messageSequenceRef = useRef(0);
+  const deduplicatorRef = useRef(createMessageDeduplicator());
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
 
   const send = useCallback((data) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(typeof data === "string" ? data : JSON.stringify(data));
+      let payload = data;
+
+      if (typeof data !== "string" && data?.type !== "auth" && !data?.client_message_id) {
+        messageSequenceRef.current += 1;
+        payload = attachClientMessageId(data, messageSequenceRef.current);
+      }
+
+      wsRef.current.send(
+        typeof payload === "string" ? payload : JSON.stringify(payload),
+      );
       return true;
     }
     return false;
@@ -96,6 +111,8 @@ export function useWebSocket({ path, onMessage, enabled = true }) {
               setConnected(true);
               retryRef.current = 0;
             }
+
+            if (!deduplicatorRef.current.accept(data)) return;
 
             setLastMessage(data);
             onMessageRef.current?.(data);
