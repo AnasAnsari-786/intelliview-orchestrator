@@ -31,7 +31,8 @@ import { Skeleton } from "@/components/States";
 import { Table, Thead, Tbody, Tr, Th, Td } from "@/components/ui";
 
 export default function SchedulePage() {
-  const { data: candidateData, error: candidateError, isLoading: loadingCandidates } = useSWR("candidates", endpoints.candidates);
+  const { data: candidateData, error: candidateError,
+    mutate: refreshCandidates, isLoading: loadingCandidates } = useSWR("candidates", endpoints.candidates);
 const { data: scheduleData, error: scheduleError, mutate: refreshSchedules, isLoading: loadingSchedules } = useSWR("schedule", () => endpoints.schedule());
 
   // Form State
@@ -292,6 +293,12 @@ const rawSchedules = scheduleData?.schedules || [];
         {candidateError && (
           <div className="bg-red-950/40 border border-red-500 text-red-300 p-3 rounded-md mb-2 flex items-center justify-between">
             <span>⚠️ Could not load candidates. Please check your connection.</span>
+                <button
+      onClick={() => refreshCandidates()}
+      className="ml-4 px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
+    >
+      Retry
+    </button>
           </div>
         )}
         {scheduleError && (
@@ -373,9 +380,12 @@ const rawSchedules = scheduleData?.schedules || [];
                     value={selectedCandidateId}
                     onChange={(e) => setSelectedCandidateId(e.target.value)}
                     required
-                    className="w-full bg-zinc-800/90 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    disabled={!!candidateError}
+                    className="w-full bg-zinc-800/90 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-100 focus:outline-none
+      focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <option value="">-- Choose Candidate --</option>
+                    <option value="">   {candidateError ? "Unable to load candidates" : "-- Choose Candidate --"}
+      </option>
                     {candidates.map((c) => (
                       <option key={c.candidate_id} value={c.candidate_id}>
                         {c.name} ({c.email})
