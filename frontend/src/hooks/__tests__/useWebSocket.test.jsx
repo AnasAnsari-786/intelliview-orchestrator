@@ -109,8 +109,17 @@ describe("useWebSocket voice error handling", () => {
     const onMessage = vi.fn();
 
     function Subscription() {
-      useWebSocket({ path: "/test", onMessage, enabled: true });
-      return null;
+      const { send } = useWebSocket({
+        path: "/test",
+        onMessage,
+        enabled: true,
+      });
+
+      return (
+        <button onClick={() => send({ type: "answer_chunk", text: "hello" })}>
+          Send answer
+        </button>
+      );
     }
 
     render(<Subscription />);
@@ -118,6 +127,7 @@ describe("useWebSocket voice error handling", () => {
     await act(async () => {
       sockets[0].readyState = WebSocket.OPEN;
       sockets[0].onopen?.();
+      screen.getByRole("button", { name: "Send answer" }).click();
       sockets[0].onmessage?.({
         data: JSON.stringify({
           type: "answer_chunk",
@@ -132,6 +142,13 @@ describe("useWebSocket voice error handling", () => {
     await act(async () => {
       sockets[1].readyState = WebSocket.OPEN;
       sockets[1].onopen?.();
+      expect(sockets[1].send.mock.calls).toContainEqual([
+        JSON.stringify({
+          type: "answer_chunk",
+          text: "hello",
+          client_message_id: "client-1",
+        }),
+      ]);
       sockets[1].onmessage?.({
         data: JSON.stringify({
           type: "answer_chunk",
@@ -139,8 +156,29 @@ describe("useWebSocket voice error handling", () => {
           text: "hello",
         }),
       });
+      sockets[1].onmessage?.({
+        data: JSON.stringify({
+          type: "message_ack",
+          ack_for: "client-1",
+        }),
+      });
+      sockets[1].onclose?.();
+      vi.advanceTimersByTime(500);
     });
 
-    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      sockets[2].readyState = WebSocket.OPEN;
+      sockets[2].onopen?.();
+    });
+
+    expect(sockets[2].send).not.toHaveBeenCalledWith(
+      JSON.stringify({
+        type: "answer_chunk",
+        text: "hello",
+        client_message_id: "client-1",
+      }),
+    );
   });
 });

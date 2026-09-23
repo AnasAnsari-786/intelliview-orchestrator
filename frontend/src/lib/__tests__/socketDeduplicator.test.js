@@ -15,6 +15,26 @@ describe("socket deduplication helpers", () => {
     });
   });
 
+  it("buffers identified outbound messages for reconnect replay", () => {
+    const deduplicator = createMessageDeduplicator();
+    const message = deduplicator.prepare({
+      type: "answer_chunk",
+      text: "hello",
+    });
+
+    expect(message.client_message_id).toBe("client-1");
+    expect(deduplicator.pending()).toEqual([message]);
+  });
+
+  it("removes acknowledged messages from the reconnect buffer", () => {
+    const deduplicator = createMessageDeduplicator();
+    const message = deduplicator.prepare({ type: "answer_chunk" });
+
+    deduplicator.acknowledge(message.client_message_id);
+
+    expect(deduplicator.pending()).toEqual([]);
+  });
+
   it("preserves an existing client message ID", () => {
     const payload = {
       type: "answer_chunk",

@@ -15,19 +15,16 @@ export function useWebSocket({ path, onMessage, enabled = true }) {
   const [error, setError] = useState(null);
   const wsRef = useRef(null);
   const retryRef = useRef(0);
-  const messageSequenceRef = useRef(0);
   const deduplicatorRef = useRef(createMessageDeduplicator());
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
 
   const send = useCallback((data) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      let payload = data;
-
-      if (typeof data !== "string" && data?.type !== "auth" && !data?.client_message_id) {
-        messageSequenceRef.current += 1;
-        payload = attachClientMessageId(data, messageSequenceRef.current);
-      }
+      const payload =
+        typeof data === "string"
+          ? data
+          : deduplicatorRef.current.prepare(data);
 
       wsRef.current.send(
         typeof payload === "string" ? payload : JSON.stringify(payload),
@@ -99,6 +96,10 @@ export function useWebSocket({ path, onMessage, enabled = true }) {
             type: "auth",
             token,
           }));
+
+          for (const message of deduplicatorRef.current.pending()) {
+            ws.send(JSON.stringify(message));
+          }
         };
 
         ws.onmessage = (event) => {
@@ -110,6 +111,10 @@ export function useWebSocket({ path, onMessage, enabled = true }) {
             if (data?.type === "hello") {
               setConnected(true);
               retryRef.current = 0;
+            }
+
+            if (data?.type === "message_ack") {
+              deduplicatorRef.current.acknowledge(data.ack_for);
             }
 
             if (!deduplicatorRef.current.accept(data)) return;
