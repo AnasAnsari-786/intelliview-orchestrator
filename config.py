@@ -6,28 +6,12 @@ via `pydantic-settings`. All values have sensible local defaults but
 should be overridden in production.
 """
 
-import json
 from functools import lru_cache
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-@lru_cache(maxsize=1)
-def get_aws_secrets(secret_name: str, region_name: str = "us-east-1") -> dict:
-    """Fetches and caches JSON secrets from AWS Secrets Manager."""
-    import boto3
-    from botocore.exceptions import ClientError
-
-    session = boto3.session.Session()
-    client = session.client(service_name="secretsmanager", region_name=region_name)
-    try:
-        response = client.get_secret_value(SecretId=secret_name)
-        if "SecretString" in response:
-            return json.loads(response["SecretString"])
-    except ClientError as e:
-        print(f"Error fetching secrets: {e}")
-    return {}
+from scripts.secrets_manager import get_aws_secrets
 
 
 class _CsvList(list):
@@ -64,8 +48,8 @@ class Settings(BaseSettings):
     worker_id: str = "worker-1"
 
     # --- API / Security ---
-    api_token: str = "dev-token-change-me"
-    jwt_secret_key: str = "change-this-to-a-long-random-secret-key"
+    api_token: str = ""
+    jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
     jwt_refresh_token_expire_days: int = 7
@@ -86,7 +70,7 @@ class Settings(BaseSettings):
 
     # --- Screen Lock ---
     screen_lock_timeout: int = 300
-    screen_lock_pin: str = "1234"
+    screen_lock_pin: str = ""
 
     # --- Real-time Tracking ---
     realtime_enabled: bool = True
@@ -107,6 +91,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = "notifications@intelliview.ai"
     smtp_use_tls: bool = False
+    app_base_url: str = "http://localhost:8000"
 
     @field_validator("postgres_host", "postgres_db", "postgres_user")
     @classmethod
@@ -158,11 +143,12 @@ class Settings(BaseSettings):
         if not self.api_token.strip():
             errors.append("API_TOKEN is required.")
         elif self.api_token == "dev-token-change-me":
-            if self.environment.lower() == "production":
-                raise RuntimeError(
-                    "CRITICAL SECURITY ERROR: Default API_TOKEN detected! "
-                    "You MUST set a secure API_TOKEN environment variable in production."
-                )
+            errors.append("Default API_TOKEN is not allowed.")
+
+        if not self.jwt_secret_key.strip():
+            errors.append("JWT_SECRET_KEY is required.")
+        elif self.jwt_secret_key == "change-this-to-a-long-random-secret-key":
+            errors.append("Default JWT_SECRET_KEY is not allowed.")
 
         if self.worker_concurrency <= 0:
             errors.append("WORKER_CONCURRENCY must be greater than 0.")

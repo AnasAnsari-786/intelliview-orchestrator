@@ -4,41 +4,31 @@ and a `session_failed` signal that lets us mark the DB session as
 FAILED only after Celery has exhausted its retries.
 """
 
-from celery import Celery, shared_task, signals
-from kombu import Queue
-from opentelemetry.instrumentation.celery import CeleryInstrumentor
+from celery import Celery, signals  # type: ignore[reportMissingImports]
+from kombu import Queue  # type: ignore[reportMissingImports]
 
-from config import REDIS_URL
+try:
+    from opentelemetry.instrumentation.celery import (  # type: ignore[reportMissingImports]
+        CeleryInstrumentor,
+    )
+except ImportError:
+    # Keep Celery usable when the optional OpenTelemetry integration is absent.
+    CeleryInstrumentor = None
+
+from config import REDIS_URL, settings
 from metrics.prometheus_metrics import TASKS_PERMANENTLY_FAILED
 
-
-@shared_task
-def reevaluate_stuck_sessions(threshold_hours=24):
-    print("Running re-evaluation task...")
-    return "Processed stuck sessions successfully."
-
-
-# 1. Initialize celery_app with task inclusion
 celery_app = Celery(
-    "interview_tasks", broker=REDIS_URL, backend=REDIS_URL, include=["workers.tasks"]
+    "interview_tasks",
+    broker=settings.celery_broker_url or REDIS_URL,
+    backend=settings.celery_result_backend or REDIS_URL,
 )
-celery_app = Celery("interview_tasks", broker=REDIS_URL, backend=REDIS_URL)
 EVALUATION_MAX_RETRIES = 3
 EVALUATION_RETRY_BACKOFF_BASE = 2
 EVALUATION_RETRY_BACKOFF_MAX = 60
-CeleryInstrumentor().instrument()
+if CeleryInstrumentor is not None:
+    CeleryInstrumentor().instrument()
 
-# 2. Set beat schedule
-celery_app.conf.beat_schedule = {
-    **getattr(celery_app.conf, "beat_schedule", {}),
-    "periodic-re-evaluate-stuck-sessions": {
-        "task": "workers.tasks.re_evaluate_stuck_sessions",
-        "schedule": 1800.0,
-        "kwargs": {"threshold_hours": 2},
-    },
-}
-celery_app = Celery("interview_tasks", broker=REDIS_URL, backend=REDIS_URL)
-CeleryInstrumentor().instrument()
 
 celery_app.conf.update(
     task_serializer="json",
@@ -64,15 +54,20 @@ celery_app.conf.update(
         Queue("fast"),
         Queue("slow"),
     ),
-    # No periodic retry scanner is configured.
-    # Interview tasks already use Celery's built-in retry/backoff mechanism
-    # via self.retry(). The previous scan_and_dispatch_retries Beat entry
-    # referenced an unregistered task and caused errors every 60 seconds.
+    beat_schedule={
+        "scan-due-retries": {
+            "task": "workers.tasks.scan_and_dispatch_retries",
+            "schedule": 10.0,
+        },
+        "detect-no-shows": {
+            "task": "workers.tasks.detect_no_shows",
+            "schedule": 60.0,
+        },
+    },
 )
 
 # Auto-discover tasks from workers module
 celery_app.autodiscover_tasks(["workers"])
-
 
 _SESSION_TASK_NAMES: frozenset[str] = frozenset(
     {
@@ -109,7 +104,6 @@ def _extract_session_id(args: tuple, kwargs: dict) -> str | None:
 def _on_task_failure(
     sender, task_id, exception, args, kwargs, traceback, einfo, **_extra
 ):
-    print(f"HANDLER EXECUTED: {task_id}")
     """When a session-aware task fails permanently (retries exhausted), mark
     the session as FAILED so the dashboard reflects reality.
 

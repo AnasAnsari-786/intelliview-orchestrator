@@ -1,4 +1,5 @@
 "use client";
+
 import OnboardingTour from "@/components/OnboardingTour";
 import { reportWebVitals } from "@/lib/webVitals";
 import { Suspense, lazy, useEffect, useState, useCallback } from "react";
@@ -66,10 +67,10 @@ function ScreenLockWrapper() {
 
 export function ClientProviders({ children }) {
   useHydrateToken();
-useEffect(() => {
-  hydrateTheme();
-  reportWebVitals();
-}, []);
+  useEffect(() => {
+    hydrateTheme();
+    reportWebVitals();
+  }, []);
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -147,7 +148,7 @@ useEffect(() => {
 
   return (
     <SWRConfig
-value={{
+      value={{
         fetcher: swrFetcher,
         revalidateOnFocus: true,
         refreshInterval: 5000,
@@ -161,21 +162,23 @@ value={{
     >
       <NotificationProvider>
         <OnboardingTour />
-      <ErrorBoundary>{children}</ErrorBoundary>
-      <Suspense fallback={null}>
-        <ScreenLockWrapper />
-      </Suspense>
-      <Suspense fallback={null}>
-        <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} onAction={handleAction} />
-        <ShortcutsHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
-        <Toaster />
-        <MobileSidebar open={mobileOpen} onClose={() => setMobileOpen(false)}>
-          <Suspense fallback={<NullFallback />}>
-            <SidebarMobile mobile onNavigate={() => setMobileOpen(false)} />
-          </Suspense>
-        </MobileSidebar>
-      </Suspense>
+        <ErrorBoundary>{children}</ErrorBoundary>
+        <Suspense fallback={null}>
+          <ScreenLockWrapper />
+        </Suspense>
+        <Suspense fallback={null}>
+          <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} onAction={handleAction} />
+          <ShortcutsHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
+          <Toaster />
+          <MobileSidebar open={mobileOpen} onClose={() => setMobileOpen(false)}>
+            <Suspense fallback={<NullFallback />}>
+              <SidebarMobile mobile onNavigate={() => setMobileOpen(false)} />
+            </Suspense>
+          </MobileSidebar>
+        </Suspense>
       </NotificationProvider>
     </SWRConfig>
   );
 }
+
+export default ClientProviders;

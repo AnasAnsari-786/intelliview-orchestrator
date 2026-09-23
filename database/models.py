@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -83,6 +84,10 @@ class InterviewSession(Base):
             "overall_score IS NULL OR overall_score >= 0",
             name="ck_overall_score_non_negative",
         ),
+        CheckConstraint(
+            "integrity_score IS NULL OR (integrity_score >= 0 AND integrity_score <= 100)",
+            name="ck_integrity_score_range",
+        ),
     )
     #
 
@@ -107,6 +112,8 @@ class InterviewSession(Base):
     end_time = Column(DateTime(timezone=True), nullable=True)
 
     risk_score = Column(Float, nullable=True)
+    integrity_score = Column(Float, nullable=True, index=True)
+    fused_signal = Column(JSON, nullable=True)
 
     # Analysis results stored as JSON
     video_analysis = Column(JSON, nullable=True)
@@ -152,7 +159,8 @@ class InterviewSession(Base):
             f"<InterviewSession(session_id='{self.session_id}', "
             f"candidate_id='{self.candidate_id}', "
             f"status='{self.status}', "
-            f"risk_score={self.risk_score})>"
+            f"risk_score={self.risk_score}, "
+            f"integrity_score={self.integrity_score})>"
         )
 
 
@@ -199,12 +207,30 @@ class Candidate(Base):
     avg_score = Column(Float, nullable=True, index=True)
     total_interviews = Column(Integer, nullable=False, default=0, index=True)
 
+    # Verification features
+    is_verified = Column(Boolean, default=False, nullable=False)
+    email_verified = Column(Boolean, default=False, nullable=False)
+    verification_token = Column(String(255), nullable=True)
+    verification_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Streak & Badges features
+    practice_streak = Column(Integer, default=0, nullable=False)
+    last_practice_date = Column(DateTime(timezone=True), nullable=True)
+    badges = Column(JSON, nullable=True, default=list)
+
+    # Search & Filtering status/role
+    status = Column(String(50), default="unverified", nullable=True)
+    role = Column(String(100), nullable=True)
+
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
         default=utcnow,
         onupdate=utcnow,
+    )
+    deleted_at = Column(
+        DateTime(timezone=True), nullable=True, index=True, default=None
     )
 
     interview_sessions = relationship(

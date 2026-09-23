@@ -1,3 +1,6 @@
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
+
 """
 FastAPI Orchestration Server
 Main entry point for the AI Interview Orchestrator API
@@ -11,20 +14,17 @@ Integrates:
 - Worker Registry for node tracking
 - Task Queue integration with Celery
 """
-
+import base64
 import io
 import json
 import logging
 import os
 import re
 import time
-import time as _time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from anyio import Path
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -89,18 +89,33 @@ from orchestrator.session_tracker import SessionTracker
 from orchestrator.state_sync import StateSynchronizer
 from orchestrator.worker_registry import WorkerRegistry
 from routers.ab_testing import create_ab_testing_routes
+from routers.auth import router as auth_router
 from routers.candidates import create_candidate_routes
+from routers.integrity import _calculate_session_integrity_score, get_tab_switch_count
+from routers.integrity import router as integrity_router
+from routers.practice_sessions import router as practice_sessions_router
 from routers.questions import create_question_routes
 from routers.schedule import create_schedule_routes
+from routers.session_control import (
+    MAX_RETRIES,
+    consume_retry,
+    create_session_control_router,
+    get_retry_count,
+    has_pending_retry,
+)
 from routers.sessions import (  # noqa: F401 (re-exported for tests)
     StartInterviewRequest,
+    _compute_live_integrity_score,
     create_session_routes,
 )
 from routers.settings import create_settings_routes
 from routers.templates import create_template_routes
 from routers.workers import create_worker_routes
 from workers.ab_testing_framework import ABTestingFramework
+from workers.ai_client import text_to_speech
 from workers.bias_auditor import BiasAuditor
+from workers.integrity_score import IntegrityScorer
+from workers.risk_engine import RiskScoringEngine
 
 # Configure logging after imports so startup messages are structured.
 configure_logging()
@@ -209,6 +224,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.exception_handler(HTTPException)
+async def custom_http_exception_handler(request: Request, exc: HTTPException):
+    headers = exc.headers or {}
+    if exc.status_code == 503:
+        if isinstance(exc.detail, dict):
+            body = {
+                "error": exc.detail.get("error", "service_unavailable"),
+                **exc.detail,
+            }
+        else:
+            body = {"error": "service_unavailable", "detail": str(exc.detail)}
+        headers.setdefault("Retry-After", "5")
+        return JSONResponse(status_code=503, content=body, headers=headers)
+    return JSONResponse(
+        status_code=exc.status_code, content={"detail": exc.detail}, headers=headers
+    )
+
+
 logging.getLogger("opentelemetry.exporter.otlp.proto.grpc.exporter").setLevel(
     logging.DEBUG
 )
@@ -262,11 +296,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         request_id = incoming if _VALID_ID_RE.match(incoming) else uuid4().hex
         request.state.request_id = request_id
         trace.get_current_span().set_attribute("request_id", request_id)
-        start = _time.perf_counter()
+        start = time.perf_counter()
         try:
             response = await call_next(request)
         except Exception:
-            elapsed_ms = (_time.perf_counter() - start) * 1000
+            elapsed_ms = (time.perf_counter() - start) * 1000
             log_event(
                 logger,
                 logging.ERROR,
@@ -277,7 +311,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             )
             logger.debug("traceback", exc_info=True)
             raise
-        elapsed_ms = (_time.perf_counter() - start) * 1000
+        elapsed_ms = (time.perf_counter() - start) * 1000
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Response-Time-ms"] = f"{elapsed_ms:.1f}"
         if request.url.path != "/health":
@@ -301,6 +335,21 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 path=request.url.path,
                 status=response.status_code,
                 elapsed_ms=round(elapsed_ms, 1),
+            )
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            from orchestrator.audit_logger import audit_logger
+
+            audit_logger.log_api_mutation(
+                method=request.method,
+                path=request.url.path,
+                status=response.status_code,
+                actor=(
+                    "authenticated"
+                    if request.headers.get("x-api-token")
+                    else "anonymous"
+                ),
+                request_id=request_id,
+                ip_address=request.client.host if request.client else "",
             )
         return response
 
@@ -333,7 +382,9 @@ app.add_middleware(
 # ========== Auth ==========
 
 
-def require_token(x_api_token: str | None = Header(default=None)) -> None:
+def require_token(
+    request: StarletteRequest, x_api_token: str | None = Header(default=None)
+) -> None:
     """Dependency that requires a valid API token.
 
     Worker agents (and any privileged caller) must send `X-API-Token`.
@@ -343,6 +394,15 @@ def require_token(x_api_token: str | None = Header(default=None)) -> None:
         # In dev with the default token, accept but log.
         logger.debug("Using default API token — set API_TOKEN in production")
     if x_api_token != API_TOKEN:
+        from orchestrator.audit_logger import audit_logger
+
+        audit_logger.log_security_event(
+            event_type="AUTH_FAILURE",
+            actor="unknown",
+            details={"path": request.url.path},
+            request_id=getattr(request.state, "request_id", ""),
+            ip_address=request.client.host if request.client else "",
+        )
         raise HTTPException(status_code=401, detail="invalid or missing API token")
 
 
@@ -399,6 +459,7 @@ dashboard_routes = create_dashboard_routes(
     ws_manager=ws_manager,
 )
 app.include_router(dashboard_routes, prefix="/monitoring", tags=["monitoring"])
+app.include_router(auth_router)
 
 
 # ========== Request/Response Models ==========
@@ -440,6 +501,7 @@ class SessionStatusResponse(BaseModel):
     status: str
     candidate_id: str
     risk_score: float | None = None
+    integrity_score: int | None = None
     assigned_node: str | None = None
     start_time: str | None = None
     end_time: str | None = None
@@ -530,6 +592,7 @@ class AskQuestionResponse(BaseModel):
     text: str
     category: str
     difficulty: str
+    audio_base64: str | None = None
 
 
 class SubmitAnswerRequest(BaseModel):
@@ -608,8 +671,6 @@ async def readiness_probe():
     """Kubernetes-style readiness probe. Returns 200 only when all dependencies are up."""
     result = await health_monitor.readiness_check()
     if not result["ready"]:
-        from fastapi.responses import JSONResponse as _JSONResponse
-
         return _JSONResponse(status_code=503, content=result)
     return result
 
@@ -620,7 +681,10 @@ async def get_dependency_statuses():
     return await health_monitor._check_all_dependencies()
 
 
-@app.get("/admin/fairness-audit", dependencies=[Depends(require_token)])
+@app.get(
+    "/admin/fairness-audit",
+    dependencies=[Depends(require_role("admin"))],
+)
 async def get_fairness_audit_report():
     """Return a lightweight fairness audit report for recent scoring patterns.
 
@@ -643,8 +707,6 @@ async def get_fairness_audit_report():
 
 
 if ENABLE_PROMETHEUS:
-    from fastapi.responses import Response as _Response
-
     from metrics.prometheus_metrics import get_metrics_text
 
     @app.get("/metrics")
@@ -664,7 +726,7 @@ if ENABLE_PROMETHEUS:
         WORKERS_HEALTHY.set(len(all_workers) - len(unhealthy))
         WORKERS_UNHEALTHY.set(len(unhealthy))
 
-        return _Response(
+        return Response(
             content=get_metrics_text(),
             media_type="text/plain; version=0.0.4; charset=utf-8",
         )
@@ -714,6 +776,19 @@ async def start_interview(
         HTTPException: On creation failure
     """
     try:
+        if hasattr(scheduler, "can_accept_task") and not scheduler.can_accept_task():
+            raise HTTPException(
+                status_code=503,
+                detail="No workers available",
+                headers={"Retry-After": "5"},
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=503, detail="No workers available", headers={"Retry-After": "5"}
+        )
+    try:
         logger.info(
             f"API: Creating interview session for candidate {request.candidate_id}"
         )
@@ -726,6 +801,44 @@ async def start_interview(
         }
         priority = priority_map.get(request.priority.lower(), TaskPriority.MEDIUM)
 
+        # Enforce the Issue #72 retry limit per candidate and role.
+        position = (request.position or "").strip()
+
+        if position:
+            retry_redis = get_redis_client()
+
+            retry_count = get_retry_count(
+                retry_redis,
+                request.candidate_id,
+                position,
+            )
+
+            retry_pending = has_pending_retry(
+                retry_redis,
+                request.candidate_id,
+                position,
+            )
+
+            if retry_pending:
+                if retry_count >= MAX_RETRIES:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Retry limit reached for candidate "
+                            f"'{request.candidate_id}' and role '{position}'. "
+                            f"Maximum retries allowed: {MAX_RETRIES}."
+                        ),
+                    )
+
+                if not consume_retry(
+                    retry_redis,
+                    request.candidate_id,
+                    position,
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Retry could not be started.",
+                    )
         # Create session
         session_id = session_manager.create_session(
             candidate_id=request.candidate_id,
@@ -749,7 +862,6 @@ async def start_interview(
         try:
             if not scheduler.can_accept_task():
                 logger.warning(f"System at capacity, rejecting task: {session_id}")
-                from fastapi.responses import JSONResponse
 
                 return JSONResponse(
                     status_code=503,
@@ -758,7 +870,6 @@ async def start_interview(
                 )
         except Exception as e:
             logger.error(f"Error checking capacity: {e!s}")
-            from fastapi.responses import JSONResponse
 
             return JSONResponse(
                 status_code=503,
@@ -789,10 +900,34 @@ async def start_interview(
             risk_score=None,
             estimated_wait_time=wait_time if wait_time >= 0 else None,
         )
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error starting interview session: {e!s}")
         raise HTTPException(status_code=500, detail=f"Error starting interview: {e!s}")
+
+    """Fuse anti-cheat signals into a single 0-100 integrity score.
+
+    Reads whatever signals are currently available for the session so the
+    score reflects the live state of a session in progress, not just its
+    final result:
+    - tab-switch events ingested via POST /integrity/events
+    - video cheat-signal flags, as soon as the video pipeline stage
+      completes (multiple_persons, phone_detected, etc.)
+    - the final pipeline risk score, once the interview has completed
+
+    Any signal that hasn't arrived yet is simply omitted rather than
+    penalized (see IntegrityScorer.calculate_integrity_score).
+    """
+    video_result = session_data.get("video_analysis") or session_data.get(
+        "video_result"
+    )
+
+    return IntegrityScorer.calculate_integrity_score(
+        tab_switches=get_tab_switch_count(session_id),
+        cv_flags=RiskScoringEngine.count_video_flags(video_result),
+        risk_score=session_data.get("risk_score"),
+    )
 
 
 @app.get("/session-status/{session_id}", response_model=SessionStatusResponse)
@@ -806,6 +941,8 @@ async def get_session_status(
     Retrieves real-time session information including:
     - Current status (CREATED, QUEUED, PROCESSING, COMPLETED, FAILED)
     - Risk score if available
+    - Fused anti-cheat integrity score (0-100), updated live as new
+      signal data (tab switches, video flags, risk score) comes in
     - Processing node information
     - Timestamps
 
@@ -832,6 +969,7 @@ async def get_session_status(
             status=session_data.get("status"),
             candidate_id=session_data.get("candidate_id"),
             risk_score=session_data.get("risk_score"),
+            integrity_score=_compute_live_integrity_score(session_id, session_data),
             assigned_node=session_data.get("assigned_node"),
             start_time=session_data.get("start_time"),
             end_time=session_data.get("end_time"),
@@ -1056,6 +1194,8 @@ def _build_risk_report_pdf(report: dict) -> Response:
 
 
 app.include_router(create_candidate_routes(candidate_manager=candidate_manager))
+app.include_router(practice_sessions_router)
+app.include_router(integrity_router)
 app.include_router(create_schedule_routes())
 app.include_router(create_question_routes(question_bank=question_bank))
 app.include_router(create_settings_routes())
@@ -1076,6 +1216,12 @@ app.include_router(
 app.include_router(
     create_ab_testing_routes(
         ab_testing_framework=ab_testing_framework,
+    )
+)
+app.include_router(
+    create_session_control_router(
+        session_manager=session_manager,
+        redis_client=get_redis_client(),
     )
 )
 
@@ -1228,7 +1374,7 @@ async def get_worker_distribution(
     except Exception as e:
         logger.error(f"Error fetching worker distribution: {e!s}")
         raise HTTPException(
-            status_code=500, detail="Error fetching worker distribution"
+            status_code=503, detail="Error fetching worker distribution"
         )
 
 
@@ -1386,6 +1532,7 @@ async def list_interviews(
                 "candidate_id": r.candidate_id,
                 "status": r.status,
                 "risk_score": r.risk_score,
+                "integrity_score": _calculate_session_integrity_score(r.session_id),
                 "assigned_node": r.assigned_node,
                 "start_time": r.start_time.isoformat() if r.start_time else None,
                 "end_time": r.end_time.isoformat() if r.end_time else None,
@@ -1604,12 +1751,18 @@ async def ask_question(
         if not question:
             raise HTTPException(status_code=404, detail="No more questions available")
 
+        audio_bytes = text_to_speech(question["text"])
+        audio_base64 = (
+            base64.b64encode(audio_bytes).decode("utf-8") if audio_bytes else None
+        )
+
         return AskQuestionResponse(
             session_id=request.session_id,
             question_id=question["question_id"],
             text=question["text"],
             category=question["category"],
             difficulty=question["difficulty"],
+            audio_base64=audio_base64,
         )
     except HTTPException:
         raise
@@ -1733,7 +1886,7 @@ async def register_worker(request: WorkerRegistrationRequest):
         }
     except Exception as e:
         logger.error(f"Error registering worker: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error registering worker: {e!s}")
+        raise HTTPException(status_code=503, detail=f"Error registering worker: {e!s}")
 
 
 @app.post("/worker/heartbeat", dependencies=[Depends(require_token)])
@@ -1842,7 +1995,7 @@ async def list_workers():
     except Exception as e:
         logger.error(f"Error fetching worker list: {e!s}")
         raise HTTPException(
-            status_code=500, detail=f"Error fetching worker list: {e!s}"
+            status_code=503, detail=f"Error fetching worker list: {e!s}"
         )
 
 
@@ -1881,7 +2034,7 @@ async def get_worker_stats():
     except Exception as e:
         logger.error(f"Error generating worker statistics: {e!s}")
         raise HTTPException(
-            status_code=500, detail=f"Error generating worker statistics: {e!s}"
+            status_code=503, detail=f"Error generating worker statistics: {e!s}"
         )
 
 
@@ -2037,7 +2190,7 @@ async def deregister_worker(worker_id: str):
     except Exception as e:
         logger.error(f"Error deregistering worker: {e!s}")
         raise HTTPException(
-            status_code=500, detail=f"Error deregistering worker: {e!s}"
+            status_code=503, detail=f"Error deregistering worker: {e!s}"
         )
 
 
@@ -2180,7 +2333,7 @@ async def get_worker_health():
     except Exception as e:
         logger.error(f"Error fetching worker health: {e!s}")
         raise HTTPException(
-            status_code=500, detail=f"Error fetching worker health: {e!s}"
+            status_code=503, detail=f"Error fetching worker health: {e!s}"
         )
 
 
@@ -2443,18 +2596,13 @@ async def get_dashboard():
         HTML content of the dashboard
     """
     try:
+        from anyio import Path
+        from fastapi.responses import HTMLResponse
 
-        dashboard_path = os.path.join(
-            os.path.dirname(__file__), "..", "monitoring", "dashboard.html"
-        )
+        dashboard_path = Path(__file__).parent / ".." / "monitoring" / "dashboard.html"
 
-        dashboard_file = Path(dashboard_path)
-
-        if await dashboard_file.exists():
-            html_content = await dashboard_file.read_text(encoding="utf-8")
-
-            from fastapi.responses import HTMLResponse
-
+        if await dashboard_path.exists():
+            html_content = await dashboard_path.read_text(encoding="utf-8")
             return HTMLResponse(content=html_content)
         raise HTTPException(status_code=404, detail="Dashboard HTML not found")
     except HTTPException:

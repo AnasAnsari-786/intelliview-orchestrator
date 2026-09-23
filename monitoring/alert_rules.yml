@@ -1,0 +1,35 @@
+groups:
+  - name: intelliview-alerts
+    rules:
+
+      - alert: WorkerDown
+        expr: up{job="celery-worker"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Celery worker is down"
+          description: "The Celery worker target has been unavailable for more than 1 minute."
+
+      - alert: ElevatedErrorRate
+        expr: |
+          (
+            sum(rate(intelliview_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(intelliview_http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated HTTP error rate"
+          description: "HTTP 5xx error rate is above 5% for more than 5 minutes."
+
+      - alert: CeleryBeatFailure
+        expr: up{job="celery-beat"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Celery Beat failure"
+          description: "Celery Beat heartbeat indicates that Beat is not running."

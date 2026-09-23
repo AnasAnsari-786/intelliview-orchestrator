@@ -1,0 +1,205 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "id": null,
+  "uid": "intelliview-orchestrator-overview",
+  "title": "IntelliView Orchestrator - Overview",
+  "description": "Worker load, queue depth, API latency, and error rate for the AI Interview Orchestrator (J2 - monitoring dashboard).",
+  "tags": ["intelliview", "orchestrator", "monitoring"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Worker Load",
+      "description": "Self-reported CPU / memory utilization per worker plus overall system utilization.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "intelliview_worker_cpu_pct",
+          "legendFormat": "{{worker_id}} CPU %"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "intelliview_worker_memory_pct",
+          "legendFormat": "{{worker_id}} Mem %"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "intelliview_system_utilization",
+          "legendFormat": "System Utilization %"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Queue Depth",
+      "description": "Global Celery queue depth, per-worker queue depth, and dead-letter queue size.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "intelliview_queue_depth",
+          "legendFormat": "Global Queue Depth"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "intelliview_worker_queue_depth",
+          "legendFormat": "{{worker_id}} Queue Depth"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "intelliview_dead_letter_queue_size",
+          "legendFormat": "Dead Letter Queue"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "API Latency",
+      "description": "HTTP request duration percentiles (p50 / p95 / p99) across all endpoints.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum(rate(intelliview_http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(intelliview_http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum(rate(intelliview_http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Error Rate",
+      "description": "Share of HTTP requests returning 4xx / 5xx over a 5m rolling window.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 * sum(rate(intelliview_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(intelliview_http_requests_total[5m])), 1e-9)",
+          "legendFormat": "5xx Error Rate %"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 * sum(rate(intelliview_http_requests_total{status=~\"4..\"}[5m])) / clamp_min(sum(rate(intelliview_http_requests_total[5m])), 1e-9)",
+          "legendFormat": "4xx Error Rate %"
+        }
+      ]
+    }
+  ]
+}
