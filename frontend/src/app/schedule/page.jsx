@@ -31,8 +31,8 @@ import { Skeleton } from "@/components/States";
 import { Table, Thead, Tbody, Tr, Th, Td } from "@/components/ui";
 
 export default function SchedulePage() {
-  const { data: candidateData, isLoading: loadingCandidates } = useSWR("candidates", endpoints.candidates);
-  const { data: scheduleData, mutate: refreshSchedules, isLoading: loadingSchedules } = useSWR("schedule", () => endpoints.schedule());
+  const { data: candidateData, error: candidateError, isLoading: loadingCandidates } = useSWR("candidates", endpoints.candidates);
+const { data: scheduleData, error: scheduleError, mutate: refreshSchedules, isLoading: loadingSchedules } = useSWR("schedule", () => endpoints.schedule());
 
   // Form State
   const [selectedCandidateId, setSelectedCandidateId] = useState("");
@@ -62,21 +62,13 @@ export default function SchedulePage() {
   const [rescheduleAt, setRescheduleAt] = useState("");
   const [isUpdatingSchedule, setIsUpdatingSchedule] = useState(false);
 
-  const sampleCandidates = [
-    { id: "cand-101", name: "Jyoshna Sankarapu (Candidate)", email: "jyoshna@example.com" },
-    { id: "cand-102", name: "Alice Johnson", email: "alice.johnson@example.com" },
-    { id: "cand-103", name: "Bob Smith", email: "bob.smith@example.com" },
-    { id: "cand-104", name: "Carol Danvers", email: "carol.danvers@example.com" },
-    { id: "cand-105", name: "David Miller", email: "david.miller@example.com" },
-  ];
+  const candidates = candidateData?.candidates && candidateData.candidates.length > 0
+  ? candidateData.candidates
+  : Array.isArray(candidateData) && candidateData.length > 0
+    ? candidateData
+    : [];
 
-  const candidates = (candidateData?.candidates && candidateData.candidates.length > 0)
-    ? candidateData.candidates
-    : (Array.isArray(candidateData) && candidateData.length > 0)
-      ? candidateData
-      : sampleCandidates;
-
-  const rawSchedules = scheduleData?.schedules || [];
+const rawSchedules = scheduleData?.schedules || [];
 
   // Filtered schedules
   const schedules = useMemo(() => {
@@ -296,7 +288,26 @@ export default function SchedulePage() {
 
   return (
     <div className="space-y-6 animate-fade-in p-2 md:p-6 text-zinc-100">
-      {/* Header */}
+          
+        {candidateError && (
+          <div className="bg-red-950/40 border border-red-500 text-red-300 p-3 rounded-md mb-2 flex items-center justify-between">
+            <span>⚠️ Could not load candidates. Please check your connection.</span>
+          </div>
+        )}
+        {scheduleError && (
+          <div className="bg-red-950/40 border border-red-500 text-red-300 p-3 rounded-md mb-2 flex items-center justify-between">
+            <span>⚠️ Could not load schedule.</span>
+            <button
+              onClick={() => refreshSchedules()}
+              className="ml-4 px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Header */}
+      
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
