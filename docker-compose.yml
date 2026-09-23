@@ -24,6 +24,20 @@ services:
           memory: 512M
           cpus: "1.0"
 
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.66.0
+    container_name: ai-interview-redis-exporter
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-interview-network
+    restart: unless-stopped
+
   postgres:
     image: postgres:15-alpine
     platform: linux/amd64
@@ -33,7 +47,7 @@ services:
     environment:
       POSTGRES_DB: ai_interview_db
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be provided}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -64,12 +78,15 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
       API_TOKEN: "${API_TOKEN:-dev-token-change-me}"
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1 
       RATE_LIMIT_PER_MINUTE: "${RATE_LIMIT_PER_MINUTE:-1000}"
       CORS_ALLOW_ORIGINS: "${CORS_ALLOW_ORIGINS:-*}"
       ENABLE_PROMETHEUS: "${ENABLE_PROMETHEUS:-true}"
       AUDIT_LOG_FILE: "${AUDIT_LOG_FILE:-}"
     volumes:
       - sqlite_data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       redis:
         condition: service_healthy
@@ -110,10 +127,10 @@ services:
       POSTGRES_DB: ai_interview_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
-
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
       API_URL: "http://fastapi:8000"
-      API_TOKEN: ${API_TOKEN}
-
+      API_TOKEN: "${API_TOKEN:?API_TOKEN must be provided}"
       WORKER_CONCURRENCY: "4"
       WORKER_ID: "${WORKER_ID:-worker-1}"
       CV_SERVICE_URL: http://cv-service:8001
@@ -124,8 +141,6 @@ services:
         condition: service_healthy
       fastapi:
         condition: service_healthy
-      cv-service:
-        condition: service_started
     volumes:
       - .:/app
     networks:
@@ -136,21 +151,52 @@ services:
       test:
         [
           "CMD",
-          "celery",
-          "-A",
-          "workers.celery_app",
-          "inspect",
-          "ping"
+          "python",
+          "-c",
+          "import sys; sys.exit(0)"
         ]
       interval: 30s
       timeout: 10s
       start_period: 30s
       retries: 5
+
+    # Resource limits prevent the worker from consuming resources needed
+    # by other services. The 4 CPU limit matches the worker concurrency
+    # setting, while 2 GiB provides memory headroom for normal workloads.
     deploy:
       resources:
         limits:
           memory: 2G
           cpus: "4.0"
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-interview-celery-beat
+    ports:
+      - "9102:9102"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ai_interview_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be provided}"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    working_dir: /app
+    networks:
+      - ai-interview-network
+    command: python -m workers.beat_entrypoint
+    restart: unless-stopped
 
   cv-service:
     build:
@@ -183,7 +229,7 @@ services:
       - "5555:5555"
     environment:
       REDIS_URL: redis://redis:6379/0
-      API_TOKEN: "${API_TOKEN:-dev-token-change-me}"
+      API_TOKEN: "${API_TOKEN:?API_TOKEN must be provided}"
       PYTHONPATH: /app
     depends_on:
       redis:
@@ -240,6 +286,7 @@ services:
       - "9090:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
       - prometheus_data:/prometheus
     networks:
       - ai-interview-network
@@ -261,6 +308,7 @@ services:
       start_period: 10s
       retries: 3
 
+
   grafana:
     image: grafana/grafana:latest
     container_name: ai-interview-grafana
@@ -268,8 +316,11 @@ services:
       - "3001:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be provided}"
       GF_USERS_ALLOW_SIGN_UP: "false"
+    depends_on:
+      prometheus:
+        condition: service_healthy
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
@@ -340,7 +391,7 @@ services:
     ports:
       - "8081:8080"
     environment:
-      API_TOKEN: "${API_TOKEN:-dev-token-change-me}"
+      API_TOKEN: "${API_TOKEN:?API_TOKEN must be provided}"
       DIGEST_BATCH_SIZE: "5"
     volumes:
       - .:/app

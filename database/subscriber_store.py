@@ -38,10 +38,10 @@ def add_subscriber(webhook_id, url, secret_ref, active=True):
 
     cursor.execute(
         """
-        INSERT INTO subscribers
-        (webhook_id, url, secret_ref, active, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        """,
+    INSERT INTO subscribers 
+    (webhook_id, url, secret_ref, active, created_at)
+    VALUES (?, ?, ?, ?, ?)
+    """,
         (webhook_id, url, secret_ref, 1 if active else 0, datetime.now().isoformat()),
     )
 

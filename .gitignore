@@ -13,8 +13,23 @@ __pycache__/
 
 # Local caches
 .cache/
+
+# Local dev artifacts
+intelliview.db
+.coverage
+htmlcov/
+
+frontend/node_modules/
+frontend/.next/
+*.db
 frontend/node_modules/
 frontend/.next/
 
 # Databases
 *.db
+
+# Celery
+celerybeat-schedule
+
+# Test coverage
+.coverage

@@ -75,8 +75,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-              pip install "packaging<26"
+          pip install "packaging<26"
           pip install "ruff==0.9.10" "black==25.1.0" "isort==6.0.1"
+
+      - name: Install eSpeak
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y espeak-ng
+
       - name: Black format check
         run: python -m black --check .
       - name: isort import check
@@ -94,6 +100,7 @@ jobs:
             --cov=. \
             --cov-report=term-missing \
             --cov-report=html \
+            --cov-report=xml \
             --cov-fail-under=50 \
             -v
 
@@ -103,6 +110,13 @@ jobs:
         with:
           name: html-coverage-report
           path: htmlcov/
+
+      - name: Upload XML coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: xml-coverage-report
+          path: coverage.xml
 
   # --------------------------------------------------
   # End-to-end tests
@@ -121,6 +135,7 @@ jobs:
       POSTGRES_DB: ai_interview_test
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      GRAFANA_PASSWORD: ci-test-grafana-password
       DATABASE_SSLMODE: disable
       REDIS_URL: redis://redis:6379/0
       XDG_CACHE_HOME: /tmp/.cache
@@ -164,9 +179,15 @@ jobs:
             echo "Waiting for API... ($i)"
             sleep 2
           done
+
           echo "API never became healthy" >&2
           docker compose -f docker-compose.yml logs
           exit 1
+
+      - name: Seed verified E2E candidate
+        run: |
+          docker compose -f docker-compose.yml exec -T fastapi \
+            python -c "from database.db import SessionLocal; from database.models import Candidate; from datetime import datetime, timezone; db=SessionLocal(); c=Candidate(candidate_id='e2e-verified-candidate', name='E2E Candidate', email='e2e-verified@example.com', email_verified=True, skills=[], interview_history=[], total_interviews=0, created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc)); db.merge(c); db.commit(); db.close()"
 
       - name: Run end-to-end smoke tests
         run: pytest tests/test_e2e_smoke.py -v -m e2e
@@ -236,12 +257,14 @@ jobs:
           fi
 
   # --------------------------------------------------
-  # Docker build and push
-  # Runs only after merge/push to main
+  # Docker build (and optional push)
+  # Builds run on every CI trigger to validate the images.
+  # Push only happens on a merge to main/Stabilized-version
+  # when Docker Hub credentials are configured.
   # --------------------------------------------------
 
   docker-build:
-    name: Build and Push Docker Images
+    name: Build (and optionally Push) Docker Images
     needs:
       - test
       - e2e
@@ -249,18 +272,27 @@ jobs:
       - check-secrets
     runs-on: ubuntu-latest
 
-    if: >-
-      github.event_name == 'push' &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/Stabilized-version') &&
-      needs.check-secrets.outputs.has-docker-creds == 'true'
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           submodules: false
 
+      - name: Determine push and tag prefix
+        id: build-settings
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && \
+             { [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.ref }}" = "refs/heads/Stabilized-version" ]; } && \
+             [ "${{ needs.check-secrets.outputs.has-docker-creds }}" = "true" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+            echo "prefix=${{ secrets.DOCKER_USERNAME }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            echo "prefix=local" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Login to Docker Hub
+        if: steps.build-settings.outputs.push == 'true'
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -269,20 +301,29 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push FastAPI image
+      - name: Build (and optionally push) FastAPI image
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: true
+          push: ${{ steps.build-settings.outputs.push }}
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/intelliview-fastapi:latest
-            ${{ secrets.DOCKER_USERNAME }}/intelliview-fastapi:${{ github.sha }}
+            ${{ steps.build-settings.outputs.prefix }}/intelliview-fastapi:latest
+            ${{ steps.build-settings.outputs.prefix }}/intelliview-fastapi:${{ github.sha }}
 
-      - name: Build and push Worker image
+      - name: Build (and optionally push) Worker image
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: true
+          push: ${{ steps.build-settings.outputs.push }}
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/intelliview-worker:latest
-            ${{ secrets.DOCKER_USERNAME }}/intelliview-worker:${{ github.sha }}
+            ${{ steps.build-settings.outputs.prefix }}/intelliview-worker:latest
+            ${{ steps.build-settings.outputs.prefix }}/intelliview-worker:${{ github.sha }}
+
+      - name: Build (and optionally push) Frontend image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./frontend
+          push: ${{ steps.build-settings.outputs.push }}
+          tags: |
+            ${{ steps.build-settings.outputs.prefix }}/intelliview-frontend:latest
+            ${{ steps.build-settings.outputs.prefix }}/intelliview-frontend:${{ github.sha }}
