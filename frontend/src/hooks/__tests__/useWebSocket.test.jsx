@@ -6,6 +6,7 @@ import { useWebSocket } from "../useWebSocket";
 vi.mock("@/lib/api", () => ({
   api: {
     wsUrl: vi.fn(() => "ws://localhost:8000/test"),
+    token: "test-token",
   },
 }));
 
@@ -102,5 +103,82 @@ describe("useWebSocket voice error handling", () => {
     expect(screen.getByTestId("reconnecting")).toHaveTextContent("false");
     expect(screen.getByTestId("retryAttempt")).toHaveTextContent("0");
     expect(screen.getByTestId("error")).toHaveTextContent("");
+  });
+
+  it("ignores a retransmitted message after reconnect", async () => {
+    const onMessage = vi.fn();
+
+    function Subscription() {
+      const { send } = useWebSocket({
+        path: "/test",
+        onMessage,
+        enabled: true,
+      });
+
+      return (
+        <button onClick={() => send({ type: "answer_chunk", text: "hello" })}>
+          Send answer
+        </button>
+      );
+    }
+
+    render(<Subscription />);
+
+    await act(async () => {
+      sockets[0].readyState = WebSocket.OPEN;
+      sockets[0].onopen?.();
+      screen.getByRole("button", { name: "Send answer" }).click();
+      sockets[0].onmessage?.({
+        data: JSON.stringify({
+          type: "answer_chunk",
+          client_message_id: "client-1",
+          text: "hello",
+        }),
+      });
+      sockets[0].onclose?.();
+      vi.advanceTimersByTime(500);
+    });
+
+    await act(async () => {
+      sockets[1].readyState = WebSocket.OPEN;
+      sockets[1].onopen?.();
+      expect(sockets[1].send.mock.calls).toContainEqual([
+        JSON.stringify({
+          type: "answer_chunk",
+          text: "hello",
+          client_message_id: "client-1",
+        }),
+      ]);
+      sockets[1].onmessage?.({
+        data: JSON.stringify({
+          type: "answer_chunk",
+          client_message_id: "client-1",
+          text: "hello",
+        }),
+      });
+      sockets[1].onmessage?.({
+        data: JSON.stringify({
+          type: "message_ack",
+          ack_for: "client-1",
+        }),
+      });
+      sockets[1].onclose?.();
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(onMessage).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      sockets[2].readyState = WebSocket.OPEN;
+      sockets[2].onopen?.();
+    });
+
+    expect(sockets[2].send).not.toHaveBeenCalledWith(
+      JSON.stringify({
+        type: "answer_chunk",
+        text: "hello",
+        client_message_id: "client-1",
+      }),
+    );
   });
 });
