@@ -1178,6 +1178,11 @@ def create_session_routes(
         session_manager.state_sync.set_session_state(
             session_id,
             session_data,
+
+        )
+        session_manager.state_sync.sync_state_to_db(
+            session_id,
+            session_data,
         )
 
         return {
