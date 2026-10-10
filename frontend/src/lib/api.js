@@ -108,6 +108,8 @@ const endpoints = {
   getRiskConfig: () => api.get("/api/admin/risk-config"),
   updateSettings: (payload) => api.put("/settings", payload),
   reportWebVitals: (payload) => api.post("/metrics/web-vitals", payload),
+  getCandidate: (candidateId) => api.get(`/candidates/${candidateId}`),
+  updateCandidate: (candidateId, payload) => api.put(`/candidates/${candidateId}`, payload),
   clearCache: () => api.delete("/clear-cache")
 };
 
