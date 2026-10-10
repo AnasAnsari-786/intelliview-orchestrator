@@ -5,7 +5,7 @@ import os
 import tempfile
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from database.db import get_db
@@ -18,7 +18,7 @@ class CreateCandidateRequest(BaseModel):
     """Request model for creating a candidate profile"""
 
     name: str = Field(min_length=1, max_length=200)
-    email: str = Field(min_length=1, max_length=255)
+    email: EmailStr
     resume_text: str | None = None
     skills: list[str] | None = None
     status: str | None = "unverified"
@@ -29,7 +29,7 @@ class UpdateCandidateRequest(BaseModel):
     """Request model for updating a candidate profile."""
 
     name: str = Field(min_length=1, max_length=200)
-    email: str = Field(min_length=1, max_length=255)
+    email: EmailStr
     resume_text: str | None = None
     skills: list[str] | None = None
 
@@ -44,7 +44,7 @@ class BulkCandidateItem(BaseModel):
     """
 
     name: str = Field(min_length=1, max_length=200)
-    email: str = Field(min_length=1, max_length=255)
+    email: EmailStr
     position: str | None = None
     phone: str | None = None
     status: str | None = "unverified"
@@ -59,7 +59,7 @@ class BulkCandidateRequest(BaseModel):
 class VerifyCandidateRequest(BaseModel):
     """Request model for candidate email verification"""
 
-    email: str = Field(..., description="Candidate email address")
+    email: EmailStr
     token: str = Field(..., description="Verification OTP token")
 
 
