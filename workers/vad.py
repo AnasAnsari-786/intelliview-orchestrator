@@ -153,13 +153,11 @@ class VoiceActivityDetector:
 
         threshold = self._estimate_noise_floor(frames)
         frame_duration_sec = self.config.frame_duration_ms / 1000.0
-        min_speech_frames = int(
-            math.ceil(
-                (self.config.min_speech_duration_ms / 1000.0) / frame_duration_sec
-            )
+        min_speech_frames = math.ceil(
+            (self.config.min_speech_duration_ms / 1000.0) / frame_duration_sec
         )
-        silence_target_frames = int(
-            math.ceil((self.config.silence_duration_ms / 1000.0) / frame_duration_sec)
+        silence_target_frames = math.ceil(
+            (self.config.silence_duration_ms / 1000.0) / frame_duration_sec
         )
 
         raw_speech_flags = [self.calculate_rms(f) >= threshold for f in frames]
