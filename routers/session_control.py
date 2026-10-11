@@ -208,35 +208,43 @@ def consume_retry(
     candidate_id: str,
     position: str,
 ) -> bool:
-    """Consume one available retry for a candidate and role."""
-    if not has_pending_retry(
-        redis_client,
-        candidate_id,
-        position,
-    ):
+    """Atomically consume one available retry for a candidate and role."""
+    if redis_client is None:
         return False
 
-    if not can_retry(
-        redis_client,
-        candidate_id,
-        position,
-    ):
-        return False
+    pending_key = _retry_pending_key(candidate_id, position)
+    count_key = _retry_key(candidate_id, position)
 
-    increment_retry_count(
-        redis_client,
-        candidate_id,
-        position,
+    script = """
+    local pending = redis.call('GET', KEYS[1])
+    if not pending then
+        return 0
+    end
+
+    local count = tonumber(redis.call('GET', KEYS[2]) or '0')
+    local max_retries = tonumber(ARGV[1])
+
+    if count >= max_retries then
+        return 0
+    end
+
+    redis.call('INCR', KEYS[2])
+    redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2]))
+    redis.call('DEL', KEYS[1])
+
+    return 1
+    """
+
+    result = redis_client.eval(
+        script,
+        2,
+        pending_key,
+        count_key,
+        MAX_RETRIES,
+        RETRY_COUNT_TTL,
     )
 
-    redis_client.delete(
-        _retry_pending_key(
-            candidate_id,
-            position,
-        )
-    )
-
-    return True
+    return bool(result)
 
 
 def create_session_control_router(
