@@ -5,7 +5,7 @@ import os
 import tempfile
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from database.db import get_db
@@ -18,7 +18,7 @@ class CreateCandidateRequest(BaseModel):
     """Request model for creating a candidate profile"""
 
     name: str = Field(min_length=1, max_length=200)
-    email: str = Field(min_length=1, max_length=255)
+    email: EmailStr
     resume_text: str | None = None
     skills: list[str] | None = None
     status: str | None = "unverified"
@@ -29,7 +29,7 @@ class UpdateCandidateRequest(BaseModel):
     """Request model for updating a candidate profile."""
 
     name: str = Field(min_length=1, max_length=200)
-    email: str = Field(min_length=1, max_length=255)
+    email: EmailStr
     resume_text: str | None = None
     skills: list[str] | None = None
 
@@ -44,7 +44,7 @@ class BulkCandidateItem(BaseModel):
     """
 
     name: str = Field(min_length=1, max_length=200)
-    email: str = Field(min_length=1, max_length=255)
+    email: EmailStr
     position: str | None = None
     phone: str | None = None
     status: str | None = "unverified"
@@ -59,7 +59,7 @@ class BulkCandidateRequest(BaseModel):
 class VerifyCandidateRequest(BaseModel):
     """Request model for candidate email verification"""
 
-    email: str = Field(..., description="Candidate email address")
+    email: EmailStr
     token: str = Field(..., description="Verification OTP token")
 
 
@@ -155,6 +155,37 @@ def create_candidate_routes(candidate_manager) -> APIRouter:
         """
         created = []
         errors = []
+        seen_emails = set()
+
+        for index, item in enumerate(request.candidates):
+            try:
+                email_lower = item.email.strip().lower() if item.email else ""
+
+                if email_lower in seen_emails:
+                    raise ValueError("Duplicate email address in import request.")
+                seen_emails.add(email_lower)
+
+
+                candidate = candidate_manager.create_candidate(
+                    name=item.name,
+                    email=item.email,
+                    status=item.status or "unverified",
+                    role=item.position,
+                )
+                candidate["position"] = item.position
+                candidate["phone"] = item.phone
+
+                if candidate.get("verification_token") and candidate.get("email"):
+                    email_service.send_verification_email(
+                        candidate_name=candidate["name"],
+                        candidate_email=candidate["email"],
+                        token=candidate["verification_token"],
+                    )
+                created.append(candidate)
+            except Exception as e:
+                logger.error(f"Error creating candidate at row {index}: {e!s}")
+                errors.append({"index": index, "email": item.email, "error": str(e)})
+                 
 
         for index, item in enumerate(request.candidates):
             try:

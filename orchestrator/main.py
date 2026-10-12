@@ -46,6 +46,7 @@ from config import (
 )
 from database.db import engine, get_db
 from database.models import Base, Candidate, InterviewSession
+from database.subscriber_store import create_table, list_subscribers
 from metrics.prometheus_metrics import (
     POSTGRES_HEALTH,
     REDIS_HEALTH,
@@ -89,6 +90,7 @@ from orchestrator.session_tracker import SessionTracker
 from orchestrator.state_sync import StateSynchronizer
 from orchestrator.worker_registry import WorkerRegistry
 from routers.ab_testing import create_ab_testing_routes
+from routers.auth import router as auth_router
 from routers.candidates import create_candidate_routes
 from routers.integrity import _calculate_session_integrity_score, get_tab_switch_count
 from routers.integrity import router as integrity_router
@@ -378,7 +380,6 @@ app.add_middleware(
     max_body_size_bytes=MAX_REQUEST_BODY_BYTES,
 )
 
-
 # ========== Auth ==========
 
 
@@ -459,6 +460,7 @@ dashboard_routes = create_dashboard_routes(
     ws_manager=ws_manager,
 )
 app.include_router(dashboard_routes, prefix="/monitoring", tags=["monitoring"])
+app.include_router(auth_router)
 
 
 # ========== Request/Response Models ==========
@@ -670,7 +672,6 @@ async def readiness_probe():
     """Kubernetes-style readiness probe. Returns 200 only when all dependencies are up."""
     result = await health_monitor.readiness_check()
     if not result["ready"]:
-
         return _JSONResponse(status_code=503, content=result)
     return result
 
@@ -707,7 +708,6 @@ async def get_fairness_audit_report():
 
 
 if ENABLE_PROMETHEUS:
-
     from metrics.prometheus_metrics import get_metrics_text
 
     @app.get("/metrics")

@@ -145,3 +145,4 @@ def test_celery_no_show_detection_marks_candidate_without_sessions():
         assert schedule.status == "no-show"
     finally:
         teardown_database(db)
+        teardown_database(db)

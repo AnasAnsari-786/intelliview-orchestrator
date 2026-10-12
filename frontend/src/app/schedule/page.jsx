@@ -24,12 +24,12 @@ import { Badge } from "@/components/Badge";
 import { Skeleton, ErrorState } from "@/components/States";
 import { Table, Thead, Tbody, Tr, Th, Td } from "@/components/ui";
 import AddToCalendarButton from "@/components/AddToCalendarButton";
-
-const fetcher = (url) => fetch(url).then((res) => res.json());
+import { endpoints } from "@/lib/api";
 
 export default function SchedulePage() {
-  const { data: candidateData,  error: candidateError,  mutate: refreshCandidates, isLoading: loadingCandidates } = useSWR("/candidates", fetcher);
-  const { data: scheduleData,  error: scheduleError, mutate: refreshSchedules, isLoading: loadingSchedules } = useSWR("/api/schedule", fetcher);
+  const { data: candidateData, error: candidateError,
+    mutate: refreshCandidates, isLoading: loadingCandidates } = useSWR("candidates", endpoints.candidates);
+const { data: scheduleData, error: scheduleError, mutate: refreshSchedules, isLoading: loadingSchedules } = useSWR("schedule", () => endpoints.schedule());
 
   // Form State
   const [selectedCandidateId, setSelectedCandidateId] = useState("");
@@ -52,21 +52,13 @@ export default function SchedulePage() {
   const [currentMonthDate, setCurrentMonthDate] = useState(new Date());
   const [statusFilter, setStatusFilter] = useState("all");
 
-  const sampleCandidates = [
-    { id: "cand-101", name: "Jyoshna Sankarapu (Candidate)", email: "jyoshna@example.com" },
-    { id: "cand-102", name: "Alice Johnson", email: "alice.johnson@example.com" },
-    { id: "cand-103", name: "Bob Smith", email: "bob.smith@example.com" },
-    { id: "cand-104", name: "Carol Danvers", email: "carol.danvers@example.com" },
-    { id: "cand-105", name: "David Miller", email: "david.miller@example.com" },
-  ];
+  const candidates = candidateData?.candidates && candidateData.candidates.length > 0
+  ? candidateData.candidates
+  : Array.isArray(candidateData) && candidateData.length > 0
+    ? candidateData
+    : [];
 
-  const candidates = (candidateData?.candidates && candidateData.candidates.length > 0)
-    ? candidateData.candidates
-    : (Array.isArray(candidateData) && candidateData.length > 0)
-      ? candidateData
-      : sampleCandidates;
-
-  const rawSchedules = scheduleData?.schedules || [];
+const rawSchedules = scheduleData?.schedules || [];
 
   // Filtered schedules
   const schedules = useMemo(() => {
@@ -94,17 +86,7 @@ export default function SchedulePage() {
         send_email: sendEmail,
       };
 
-      const res = await fetch("/api/schedule", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.detail || "Failed to schedule interview.");
-      }
+      const data = await endpoints.createSchedule(payload);
 
       setNotification({
         type: "success",
@@ -128,14 +110,8 @@ export default function SchedulePage() {
   // Status Change Handler
   const handleStatusUpdate = async (scheduleId, newStatus) => {
     try {
-      const res = await fetch(`/api/schedule/${scheduleId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (res.ok) {
-        refreshSchedules();
-      }
+      await endpoints.updateSchedule(scheduleId, { status: newStatus });
+      refreshSchedules();
     } catch (err) {
       console.error("Failed to update status", err);
     }
@@ -164,27 +140,34 @@ export default function SchedulePage() {
     "July", "August", "September", "October", "November", "December"
   ];
 
-  if (candidateError) {
-  return (
-    <ErrorState
-      error={candidateError}
-      onRetry={refreshCandidates}
-    />
-  );
-}
-
-if (scheduleError) {
-  return (
-    <ErrorState
-      error={scheduleError}
-      onRetry={refreshSchedules}
-    />
-  );
-}
-
   return (
     <div className="space-y-6 animate-fade-in p-2 md:p-6 text-zinc-100">
-      {/* Header */}
+          
+        {candidateError && (
+          <div className="bg-red-950/40 border border-red-500 text-red-300 p-3 rounded-md mb-2 flex items-center justify-between">
+            <span>⚠️ Could not load candidates. Please check your connection.</span>
+                <button
+      onClick={() => refreshCandidates()}
+      className="ml-4 px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
+    >
+      Retry
+    </button>
+          </div>
+        )}
+        {scheduleError && (
+          <div className="bg-red-950/40 border border-red-500 text-red-300 p-3 rounded-md mb-2 flex items-center justify-between">
+            <span>⚠️ Could not load schedule.</span>
+            <button
+              onClick={() => refreshSchedules()}
+              className="ml-4 px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Header */}
+      
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
@@ -250,9 +233,12 @@ if (scheduleError) {
                     value={selectedCandidateId}
                     onChange={(e) => setSelectedCandidateId(e.target.value)}
                     required
-                    className="w-full bg-zinc-800/90 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    disabled={!!candidateError}
+                    className="w-full bg-zinc-800/90 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-100 focus:outline-none
+      focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <option value="">-- Choose Candidate --</option>
+                    <option value="">   {candidateError ? "Unable to load candidates" : "-- Choose Candidate --"}
+      </option>
                     {candidates.map((c) => (
                       <option key={c.candidate_id} value={c.candidate_id}>
                         {c.name} ({c.email})
