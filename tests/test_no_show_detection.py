@@ -12,7 +12,6 @@ from database.models import Candidate, InterviewSchedule, InterviewSession
 from routers.attendance import create_attendance_routes
 from workers import tasks
 
-
 engine = create_engine(
     "sqlite://",
     connect_args={"check_same_thread": False},
@@ -105,6 +104,7 @@ def test_celery_no_show_detection_handles_multiple_sessions():
     finally:
         teardown_database(db)
 
+
 def test_manual_no_show_detection_marks_candidate_without_sessions():
     db, schedule = setup_database()
 
@@ -143,4 +143,5 @@ def test_celery_no_show_detection_marks_candidate_without_sessions():
         assert result["count"] == 1
         assert schedule.status == "no-show"
     finally:
+        teardown_database(db)
         teardown_database(db)

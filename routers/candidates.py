@@ -165,7 +165,6 @@ def create_candidate_routes(candidate_manager) -> APIRouter:
                     raise ValueError("Duplicate email address in import request.")
                 seen_emails.add(email_lower)
 
-
                 candidate = candidate_manager.create_candidate(
                     name=item.name,
                     email=item.email,
@@ -185,7 +184,6 @@ def create_candidate_routes(candidate_manager) -> APIRouter:
             except Exception as e:
                 logger.error(f"Error creating candidate at row {index}: {e!s}")
                 errors.append({"index": index, "email": item.email, "error": str(e)})
-                 
 
         for index, item in enumerate(request.candidates):
             try:
