@@ -12,7 +12,6 @@ from database.models import Candidate, InterviewSchedule, InterviewSession
 from routers.attendance import create_attendance_routes
 from workers import tasks
 
-
 engine = create_engine(
     "sqlite://",
     connect_args={"check_same_thread": False},
